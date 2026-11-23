@@ -1,0 +1,84 @@
+# ============================================================================
+# Book app Deployment：运行 book-app 容器的 K8s 工作负载
+# 资源配置：CPU 256 / 内存 512（0.25 vCPU / 512Mi）
+# 镜像来自 SWR，请先用 src/scripts/build-push.sh 构建并推送后，把下方
+# <SWR_IMAGE_PATH> 替换为真实镜像地址，例如：
+#   swr.cn-north-4.myhuaweicloud.com/bookapp/book_app:latest
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: book-app
+  namespace: default
+  labels:
+    app: book-app
+spec:
+  replicas: 1                      # 副本数 1
+  selector:
+    matchLabels:
+      app: book-app
+  template:
+    metadata:
+      labels:
+        app: book-app
+    spec:
+      # CCE 节点在私网子网且未配 NAT 时可能被打 route-unreachable taint，
+      # 作为演示先容忍该 taint 让 Pod 可调；生产应通过 NAT/合理路由解决。
+      tolerations:
+        - key: "node.kubernetes.io/route-unreachable"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: book-app
+          image: swr.cn-north-4.myhuaweicloud.com/bookapp/book_app:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "256m"
+              memory: "512Mi"
+            limits:
+              cpu: "256m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+# ============================================================================
+# Book app Service：通过 ELB 对外暴露 book-app
+# 通过 CCE 的 ELB 注解，复用 Terraform 创建的独享型 ELB（huaweicloud_elb_loadbalancer.main）
+# CCE 会据此自动创建监听器/后端池并把 Pod 注册为后端，无需在 Terraform 中重复管理。
+# 请执行 `terraform output elb_id` 与 `terraform output elb_subnet_id` 后填入下方注解。
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: book-app
+  namespace: default
+  annotations:
+    # 复用 Terraform 创建的 ELB（必填）
+    kubernetes.io/elb.id: "17c9a5a6-0b1d-41ab-b277-2639d1061a02"          # terraform output elb_id
+    # ELB 类型：独享型(performance) / 共享型(shared)；Terraform 创建的是独享型(ELBv3)。
+    kubernetes.io/elb.class: "performance"
+    # ELB 所在公网子网（必填）
+    kubernetes.io/elb.subnet-id: "dab542f6-3d87-466f-af19-fb53a6447657"    # terraform output elb_subnet_id
+    # 会话保持/算法等（可选）
+    kubernetes.io/elb.lb-algorithm: "ROUND_ROBIN"
+    # 公网 ELB 默认放通 80；如需仅允许特定 IP，可加 kubernetes.io/elb.security-group-id
+spec:
+  type: LoadBalancer
+  selector:
+    app: book-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
