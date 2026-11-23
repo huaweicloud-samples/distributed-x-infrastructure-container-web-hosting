@@ -1,0 +1,25 @@
+# ============================================================================
+# HorizontalPodAutoscaler：按 CPU 利用率自动伸缩 Pod 副本数
+# 目标值：CPU 80%，Min=1 / Max=4
+# 前置：CCE 集群需安装 metrics-server 插件（控制台或 `kubectl apply` 官方组件）。
+# 节点层伸缩由 Terraform 节点池 scall_enable（min1/max4）负责。
+# ============================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: book-app
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: book-app
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
